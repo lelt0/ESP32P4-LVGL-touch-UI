@@ -38,6 +38,14 @@ static void button_event_cb(lv_event_t *event)
     }
 }
 
+static void tabview_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_VALUE_CHANGED) {
+        lv_obj_add_flag(numeric_keyboard, LV_OBJ_FLAG_HIDDEN);
+        numeric_input_replace_on_next_key = false;
+    }
+}
+
 static void numeric_input_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) == LV_EVENT_CLICKED) {
@@ -94,17 +102,28 @@ static void create_ui(void)
 {
     lv_obj_t *screen = lv_screen_active();
 
-    lv_obj_t *title = lv_label_create(screen);
+    lv_obj_t *tabview = lv_tabview_create(screen);
+    lv_obj_set_size(tabview, LV_PCT(100), LV_PCT(100));
+    lv_tabview_set_tab_bar_size(tabview, 80);
+    lv_obj_set_style_text_font(lv_tabview_get_tab_bar(tabview), &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_add_event_cb(tabview, tabview_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *main_page = lv_tabview_add_tab(tabview, "Main");
+    lv_tabview_add_tab(tabview, "Page 2");
+    lv_obj_add_flag(main_page, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(main_page, dismiss_numeric_keyboard_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *title = lv_label_create(main_page);
     lv_label_set_text(title, "ESP32-P4 Touch UI");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_48, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
 
-    lv_obj_t *status_label = lv_label_create(screen);
+    lv_obj_t *status_label = lv_label_create(main_page);
     lv_label_set_text(status_label, "Button pressed: 0");
     lv_obj_set_style_text_font(status_label, &lv_font_montserrat_48, 0);
     lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -70);
 
-    lv_obj_t *button = lv_button_create(screen);
+    lv_obj_t *button = lv_button_create(main_page);
     lv_obj_set_size(button, 330, 120);
     lv_obj_align(button, LV_ALIGN_CENTER, 0, 50);
     lv_obj_add_event_cb(button, button_event_cb, LV_EVENT_CLICKED, status_label);
@@ -115,12 +134,12 @@ static void create_ui(void)
     lv_obj_set_style_text_font(button_label, &lv_font_montserrat_48, 0);
     lv_obj_center(button_label);
 
-    lv_obj_t *value_label = lv_label_create(screen);
+    lv_obj_t *value_label = lv_label_create(main_page);
     lv_label_set_text(value_label, "Value");
     lv_obj_set_style_text_font(value_label, &lv_font_montserrat_48, 0);
     lv_obj_align(value_label, LV_ALIGN_CENTER, 0, 140);
 
-    numeric_input = lv_textarea_create(screen);
+    numeric_input = lv_textarea_create(main_page);
     lv_textarea_set_one_line(numeric_input, true);
     lv_textarea_set_accepted_chars(numeric_input, "0123456789.");
     lv_textarea_set_max_length(numeric_input, 12);
@@ -136,7 +155,7 @@ static void create_ui(void)
     lv_obj_add_flag(numeric_input, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_event_cb(numeric_input, numeric_input_event_cb, LV_EVENT_CLICKED, NULL);
 
-    numeric_keyboard = lv_keyboard_create(screen);
+    numeric_keyboard = lv_keyboard_create(main_page);
     lv_keyboard_set_mode(numeric_keyboard, LV_KEYBOARD_MODE_USER_1);
     lv_keyboard_set_map(numeric_keyboard, LV_KEYBOARD_MODE_USER_1, numeric_key_map, numeric_key_ctrl_map);
     lv_keyboard_set_textarea(numeric_keyboard, numeric_input);
@@ -146,9 +165,6 @@ static void create_ui(void)
     lv_obj_align(numeric_keyboard, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
     lv_obj_set_style_text_font(numeric_keyboard, &lv_font_montserrat_48, LV_PART_ITEMS);
     lv_obj_add_flag(numeric_keyboard, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_add_flag(screen, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(screen, dismiss_numeric_keyboard_event_cb, LV_EVENT_CLICKED, NULL);
 }
 
 void app_main(void)
