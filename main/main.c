@@ -1,17 +1,40 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <inttypes.h>
+#include <stdio.h>
 
 #include "esp_err.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
 
+#define DIAL_TICK_COUNT 40
+#define DIAL_DEGREES_PER_TURN 360
+#define DIAL_UNITS_PER_TURN 100
+#define DIAL_CAP_PERCENT 42
+
+typedef enum {
+    DIAL_IDLE,
+    DIAL_ROTATING,
+    DIAL_WAIT_FOR_ANGLE,
+    DIAL_HOLD_CENTER,
+} dial_press_t;
+
 static const char *TAG = "touch_ui";
 static uint32_t button_press_count;
 static lv_obj_t *numeric_input;
 static lv_obj_t *numeric_keyboard;
+static lv_obj_t *dial_face;
+static lv_obj_t *dial_value_label;
+static lv_obj_t *dial_pointer;
+static lv_point_precise_t dial_tick_points[DIAL_TICK_COUNT][2];
+static lv_point_precise_t dial_pointer_points[2];
 static bool numeric_input_replace_on_next_key;
+static dial_press_t dial_press;
+static int32_t dial_last_angle;
+static int64_t dial_rotation_degrees;
+static int64_t dial_displayed_value;
 
 static const char * const numeric_key_map[] = {
     "1", "2", "3", "\n",
@@ -28,6 +51,228 @@ static const lv_buttonmatrix_ctrl_t numeric_key_ctrl_map[] = {
     1, 1,
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 3
 };
+
+static void update_dial_display(void)
+{
+    int32_t angle = dial_rotation_degrees % DIAL_DEGREES_PER_TURN;
+    int32_t partial = angle * DIAL_UNITS_PER_TURN;
+    partial += partial < 0 ? -DIAL_DEGREES_PER_TURN / 2 : DIAL_DEGREES_PER_TURN / 2;
+    int64_t value = (dial_rotation_degrees / DIAL_DEGREES_PER_TURN) * DIAL_UNITS_PER_TURN +
+                    partial / DIAL_DEGREES_PER_TURN;
+    if (value != dial_displayed_value) {
+        char text[32];
+        snprintf(text, sizeof(text), "Value: %" PRId64, value);
+        lv_label_set_text(dial_value_label, text);
+        dial_displayed_value = value;
+    }
+
+    int32_t center = lv_obj_get_content_width(dial_face) / 2;
+    int32_t pointer_radius = center * 3 / 4;
+    dial_pointer_points[0] = (lv_point_precise_t){center, center};
+    dial_pointer_points[1] = (lv_point_precise_t){
+        center + lv_trigo_sin(angle) * pointer_radius / LV_TRIGO_SIN_MAX,
+        center - lv_trigo_sin(angle + 90) * pointer_radius / LV_TRIGO_SIN_MAX,
+    };
+    lv_line_set_points(dial_pointer, dial_pointer_points, 2);
+}
+
+static lv_point_t dial_point_offset(const lv_point_t *point)
+{
+    lv_area_t coords;
+    lv_obj_get_coords(dial_face, &coords);
+    return (lv_point_t){
+        point->x - (coords.x1 + coords.x2) / 2,
+        point->y - (coords.y1 + coords.y2) / 2,
+    };
+}
+
+static bool dial_within_radius(lv_point_t offset, int32_t radius)
+{
+    return offset.x * offset.x + offset.y * offset.y <= radius * radius;
+}
+
+static void dial_event_cb(lv_event_t *event)
+{
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST || code == LV_EVENT_INDEV_RESET) {
+        dial_press = DIAL_IDLE;
+        return;
+    }
+    if (code != LV_EVENT_PRESSED &&
+        (dial_press == DIAL_IDLE || (code != LV_EVENT_PRESSING && code != LV_EVENT_LONG_PRESSED))) {
+        return;
+    }
+
+    lv_indev_t *indev = lv_event_get_indev(event);
+    if (indev == NULL || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) {
+        return;
+    }
+
+    lv_point_t point;
+    lv_indev_get_point(indev, &point);
+    lv_point_t offset = dial_point_offset(&point);
+    int32_t center_radius = lv_obj_get_content_width(dial_face) * DIAL_CAP_PERCENT / 200;
+    bool at_center = dial_within_radius(offset, center_radius);
+
+    if (code == LV_EVENT_PRESSED) {
+        if (!dial_within_radius(offset, lv_obj_get_width(dial_face) / 2)) {
+            dial_press = DIAL_IDLE;
+        }
+        else if (at_center) {
+            dial_press = DIAL_HOLD_CENTER;
+        }
+        else {
+            dial_last_angle = lv_atan2(offset.y, offset.x);
+            dial_press = DIAL_ROTATING;
+        }
+        return;
+    }
+
+    if (dial_press == DIAL_HOLD_CENTER) {
+        if (!at_center) {
+            dial_press = DIAL_IDLE;
+        }
+        else if (code == LV_EVENT_LONG_PRESSED) {
+            dial_rotation_degrees = 0;
+            update_dial_display();
+            dial_press = DIAL_IDLE;
+        }
+        return;
+    }
+    if (code != LV_EVENT_PRESSING) {
+        return;
+    }
+    if (at_center) {
+        dial_press = DIAL_WAIT_FOR_ANGLE;
+        return;
+    }
+
+    int32_t angle = lv_atan2(offset.y, offset.x);
+    if (dial_press == DIAL_ROTATING) {
+        // Screen Y increases downward, so a clockwise angle change is positive.
+        int32_t delta = angle - dial_last_angle;
+        if (delta > DIAL_DEGREES_PER_TURN / 2) {
+            delta -= DIAL_DEGREES_PER_TURN;
+        }
+        else if (delta < -DIAL_DEGREES_PER_TURN / 2) {
+            delta += DIAL_DEGREES_PER_TURN;
+        }
+        if (delta != 0) {
+            dial_rotation_degrees += delta;
+            update_dial_display();
+        }
+    }
+    dial_last_angle = angle;
+    dial_press = DIAL_ROTATING;
+}
+
+static lv_obj_t *create_dial_line(lv_obj_t *parent, lv_point_precise_t points[2],
+                                  lv_color_t color, int32_t width)
+{
+    lv_obj_t *line = lv_line_create(parent);
+    lv_obj_set_size(line, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(line);
+    lv_line_set_points(line, points, 2);
+    lv_obj_set_style_line_color(line, color, LV_PART_MAIN);
+    lv_obj_set_style_line_width(line, width, LV_PART_MAIN);
+    lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    return line;
+}
+
+static void create_dial(lv_obj_t *page)
+{
+    lv_obj_update_layout(page);
+    int32_t available_width = lv_obj_get_content_width(page);
+    int32_t available_height = lv_obj_get_content_height(page);
+    int32_t outer_size = available_width - 32;
+    if (outer_size > available_height - 112) {
+        outer_size = available_height - 112;
+    }
+    if (outer_size > 440) {
+        outer_size = 440;
+    }
+
+    lv_obj_t *bezel = lv_obj_create(page);
+    lv_obj_set_size(bezel, outer_size, outer_size);
+    lv_obj_align(bezel, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_set_style_radius(bezel, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bezel, lv_color_hex(0x42474F), LV_PART_MAIN);
+    lv_obj_set_style_border_color(bezel, lv_color_hex(0xAEB4BD), LV_PART_MAIN);
+    lv_obj_set_style_border_width(bezel, 3, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(bezel, lv_color_hex(0x101215), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(bezel, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(bezel, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(bezel, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    int32_t face_size = outer_size - 34;
+    dial_face = lv_obj_create(bezel);
+    lv_obj_set_size(dial_face, face_size, face_size);
+    lv_obj_center(dial_face);
+    lv_obj_set_style_radius(dial_face, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dial_face, lv_color_hex(0x22262C), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(dial_face, lv_color_hex(0x42474F), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(dial_face, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(dial_face, lv_color_hex(0x666D77), LV_PART_MAIN);
+    lv_obj_set_style_border_width(dial_face, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(dial_face, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(dial_face, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN |
+                                   LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_flag(dial_face, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(dial_face, dial_event_cb, LV_EVENT_ALL, NULL);
+
+    lv_obj_update_layout(dial_face);
+    int32_t content_size = lv_obj_get_content_width(dial_face);
+    int32_t center = content_size / 2;
+    int32_t outer_radius = content_size * 44 / 100;
+    for (uint32_t i = 0; i < DIAL_TICK_COUNT; i++) {
+        int32_t angle = i * DIAL_DEGREES_PER_TURN / DIAL_TICK_COUNT;
+        bool major_tick = (i % 5) == 0;
+        int32_t inner_radius = outer_radius - (major_tick ? 18 : 9);
+        int32_t sin_angle = lv_trigo_sin(angle);
+        int32_t cos_angle = lv_trigo_sin(angle + 90);
+        dial_tick_points[i][0] = (lv_point_precise_t){
+            center + sin_angle * outer_radius / LV_TRIGO_SIN_MAX,
+            center - cos_angle * outer_radius / LV_TRIGO_SIN_MAX,
+        };
+        dial_tick_points[i][1] = (lv_point_precise_t){
+            center + sin_angle * inner_radius / LV_TRIGO_SIN_MAX,
+            center - cos_angle * inner_radius / LV_TRIGO_SIN_MAX,
+        };
+        create_dial_line(dial_face, dial_tick_points[i],
+                         major_tick ? lv_color_hex(0xE2E5E9) : lv_color_hex(0x858C96),
+                         major_tick ? 4 : 2);
+    }
+
+    dial_pointer = create_dial_line(dial_face, dial_pointer_points,
+                                    lv_theme_get_color_primary(page), 8);
+
+    lv_obj_t *center_cap = lv_obj_create(dial_face);
+    int32_t cap_size = content_size * DIAL_CAP_PERCENT / 100;
+    lv_obj_set_size(center_cap, cap_size, cap_size);
+    lv_obj_center(center_cap);
+    lv_obj_set_style_radius(center_cap, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(center_cap, lv_color_hex(0x454B54), LV_PART_MAIN);
+    lv_obj_set_style_border_color(center_cap, lv_color_hex(0x858C96), LV_PART_MAIN);
+    lv_obj_set_style_border_width(center_cap, 3, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(center_cap, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(center_cap, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *reset_label = lv_label_create(center_cap);
+    lv_label_set_text(reset_label, "RESET");
+    lv_obj_set_style_text_color(reset_label, lv_color_hex(0xF4F4F4), LV_PART_MAIN);
+    lv_obj_center(reset_label);
+
+    dial_value_label = lv_label_create(page);
+    lv_label_set_text(dial_value_label, "Value: 0");
+    lv_obj_set_style_text_font(dial_value_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_align(dial_value_label, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *hint = lv_label_create(page);
+    lv_label_set_text(hint, "1 turn = 100  |  Hold center to reset");
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    update_dial_display();
+}
 
 static void button_event_cb(lv_event_t *event)
 {
@@ -109,9 +354,10 @@ static void create_ui(void)
     lv_obj_add_event_cb(tabview, tabview_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t *main_page = lv_tabview_add_tab(tabview, "Main");
-    lv_tabview_add_tab(tabview, "Page 2");
+    lv_obj_t *dial_page = lv_tabview_add_tab(tabview, "Page 2");
     lv_obj_add_flag(main_page, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(main_page, dismiss_numeric_keyboard_event_cb, LV_EVENT_CLICKED, NULL);
+    create_dial(dial_page);
 
     lv_obj_t *title = lv_label_create(main_page);
     lv_label_set_text(title, "ESP32-P4 Touch UI");
