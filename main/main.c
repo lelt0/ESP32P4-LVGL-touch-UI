@@ -28,6 +28,10 @@ static lv_obj_t *numeric_keyboard;
 static lv_obj_t *dial_face;
 static lv_obj_t *dial_value_label;
 static lv_obj_t *dial_pointer;
+static lv_obj_t *rocker_faces[2];
+static lv_obj_t *rocker_labels[2];
+static lv_obj_t *rocker_indicators[2];
+static lv_obj_t *rocker_state_label;
 static lv_point_precise_t dial_tick_points[DIAL_TICK_COUNT][2];
 static lv_point_precise_t dial_pointer_points[2];
 static bool numeric_input_replace_on_next_key;
@@ -274,6 +278,109 @@ static void create_dial(lv_obj_t *page)
     update_dial_display();
 }
 
+static void update_rocker_display(bool on)
+{
+    lv_color_t primary = lv_theme_get_color_primary(rocker_state_label);
+    lv_label_set_text(rocker_state_label, on ? "State: ON" : "State: OFF");
+    for (uint32_t i = 0; i < 2; i++) {
+        bool active = i == (on ? 1U : 0U);
+        lv_color_t accent = on ? primary : lv_color_hex(0xF4F4F4);
+        lv_obj_set_style_translate_y(rocker_faces[i], active ? 6 : -6, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(rocker_faces[i],
+                                 lv_color_hex(active ? 0x22262C : 0x666D77), LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_color(rocker_faces[i],
+                                      lv_color_hex(active ? 0x42474F : 0x22262C), LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(rocker_faces[i], active ? 0 : 8, LV_PART_MAIN);
+        lv_obj_set_style_text_color(rocker_labels[i],
+                                   active ? accent : lv_color_hex(0x858C96), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(rocker_indicators[i],
+                                 active ? accent : lv_color_hex(0x22262C), LV_PART_MAIN);
+    }
+}
+
+static void rocker_event_cb(lv_event_t *event)
+{
+    lv_indev_t *indev = lv_event_get_indev(event);
+    if (indev == NULL || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) {
+        return;
+    }
+
+    lv_obj_t *rocker = lv_event_get_current_target(event);
+    lv_area_t coords;
+    lv_point_t point;
+    lv_obj_get_coords(rocker, &coords);
+    lv_indev_get_point(indev, &point);
+    if (point.x < coords.x1 || point.x > coords.x2 ||
+        point.y < coords.y1 || point.y > coords.y2) {
+        return;
+    }
+    update_rocker_display(point.x - coords.x1 >= lv_obj_get_width(rocker) / 2);
+}
+
+static void create_rocker_switch(lv_obj_t *page)
+{
+    lv_obj_update_layout(page);
+    int32_t width = lv_obj_get_content_width(page) - 48;
+    if (width > 400) {
+        width = 400;
+    }
+
+    rocker_state_label = lv_label_create(page);
+    lv_obj_set_style_text_font(rocker_state_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_align(rocker_state_label, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *rocker = lv_obj_create(page);
+    lv_obj_set_size(rocker, width, 180);
+    lv_obj_align(rocker, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_set_style_text_font(rocker, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_radius(rocker, 16, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(rocker, lv_color_hex(0x101215), LV_PART_MAIN);
+    lv_obj_set_style_border_color(rocker, lv_color_hex(0xAEB4BD), LV_PART_MAIN);
+    lv_obj_set_style_border_width(rocker, 4, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(rocker, lv_color_hex(0x42474F), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(rocker, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(rocker, 10, LV_PART_MAIN);
+    lv_obj_remove_flag(rocker, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN |
+                              LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_flag(rocker, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_add_event_cb(rocker, rocker_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_update_layout(rocker);
+    for (uint32_t i = 0; i < 2; i++) {
+        lv_obj_t *face = lv_obj_create(rocker);
+        rocker_faces[i] = face;
+        lv_obj_set_size(face, (lv_obj_get_content_width(rocker) - 4) / 2,
+                       lv_obj_get_content_height(rocker) - 12);
+        lv_obj_align(face, i == 0 ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_radius(face, 8, LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_dir(face, LV_GRAD_DIR_VER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(face, lv_color_hex(0x858C96), LV_PART_MAIN);
+        lv_obj_set_style_border_width(face, 2, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(face, lv_color_hex(0x101215), LV_PART_MAIN);
+        lv_obj_set_style_shadow_opa(face, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_shadow_offset_y(face, 4, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(face, 0, LV_PART_MAIN);
+        lv_obj_remove_flag(face, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+        rocker_labels[i] = lv_label_create(face);
+        lv_label_set_text(rocker_labels[i], i == 0 ? "OFF" : "ON");
+        lv_obj_align(rocker_labels[i], LV_ALIGN_CENTER, 0, -8);
+        lv_obj_remove_flag(rocker_labels[i], LV_OBJ_FLAG_CLICKABLE);
+
+        rocker_indicators[i] = lv_obj_create(face);
+        lv_obj_set_size(rocker_indicators[i], 48, 8);
+        lv_obj_align(rocker_indicators[i], LV_ALIGN_BOTTOM_MID, 0, -12);
+        lv_obj_set_style_radius(rocker_indicators[i], 4, LV_PART_MAIN);
+        lv_obj_set_style_border_width(rocker_indicators[i], 0, LV_PART_MAIN);
+        lv_obj_remove_flag(rocker_indicators[i], LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
+
+    lv_obj_t *hint = lv_label_create(page);
+    lv_label_set_text(hint, "Tap left: OFF  |  Tap right: ON");
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+    update_rocker_display(false);
+}
+
 static void button_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) == LV_EVENT_CLICKED) {
@@ -357,7 +464,19 @@ static void create_ui(void)
     lv_obj_t *dial_page = lv_tabview_add_tab(tabview, "Page 2");
     lv_obj_add_flag(main_page, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(main_page, dismiss_numeric_keyboard_event_cb, LV_EVENT_CLICKED, NULL);
-    create_dial(dial_page);
+    lv_obj_t *dial_panel = lv_obj_create(dial_page);
+    lv_obj_remove_style_all(dial_panel);
+    lv_obj_set_size(dial_panel, LV_PCT(55), LV_PCT(100));
+    lv_obj_align(dial_panel, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_remove_flag(dial_panel, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    create_dial(dial_panel);
+
+    lv_obj_t *switch_panel = lv_obj_create(dial_page);
+    lv_obj_remove_style_all(switch_panel);
+    lv_obj_set_size(switch_panel, LV_PCT(45), LV_PCT(100));
+    lv_obj_align(switch_panel, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_remove_flag(switch_panel, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    create_rocker_switch(switch_panel);
 
     lv_obj_t *title = lv_label_create(main_page);
     lv_label_set_text(title, "ESP32-P4 Touch UI");
