@@ -13,6 +13,7 @@
 #define DIAL_DEGREES_PER_TURN 360
 #define DIAL_UNITS_PER_TURN 100
 #define DIAL_CAP_PERCENT 42
+#define DIAL_POINTER_WIDTH 8
 
 typedef enum {
     DIAL_IDLE,
@@ -34,6 +35,7 @@ static lv_obj_t *rocker_indicators[2];
 static lv_obj_t *rocker_state_label;
 static lv_point_precise_t dial_tick_points[DIAL_TICK_COUNT][2];
 static lv_point_precise_t dial_pointer_points[2];
+static char dial_value_text[32] = "Value: 0";
 static bool numeric_input_replace_on_next_key;
 static dial_press_t dial_press;
 static int32_t dial_last_angle;
@@ -56,6 +58,23 @@ static const lv_buttonmatrix_ctrl_t numeric_key_ctrl_map[] = {
     LV_KEYBOARD_CTRL_BUTTON_FLAGS | 3
 };
 
+static void invalidate_dial_pointer(void)
+{
+    lv_area_t coords;
+    lv_obj_get_coords(dial_pointer, &coords);
+    lv_point_precise_t start = dial_pointer_points[0];
+    lv_point_precise_t end = dial_pointer_points[1];
+    lv_area_t area = {
+        .x1 = coords.x1 + LV_MIN(start.x, end.x),
+        .y1 = coords.y1 + LV_MIN(start.y, end.y),
+        .x2 = coords.x1 + LV_MAX(start.x, end.x),
+        .y2 = coords.y1 + LV_MAX(start.y, end.y),
+    };
+    // Include the line stroke and antialiasing, as lv_draw_line() does.
+    lv_area_increase(&area, DIAL_POINTER_WIDTH, DIAL_POINTER_WIDTH);
+    lv_obj_invalidate_area(dial_pointer, &area);
+}
+
 static void update_dial_display(void)
 {
     int32_t angle = dial_rotation_degrees % DIAL_DEGREES_PER_TURN;
@@ -64,20 +83,22 @@ static void update_dial_display(void)
     int64_t value = (dial_rotation_degrees / DIAL_DEGREES_PER_TURN) * DIAL_UNITS_PER_TURN +
                     partial / DIAL_DEGREES_PER_TURN;
     if (value != dial_displayed_value) {
-        char text[32];
-        snprintf(text, sizeof(text), "Value: %" PRId64, value);
-        lv_label_set_text(dial_value_label, text);
+        snprintf(dial_value_text, sizeof(dial_value_text), "Value: %" PRId64, value);
+        lv_label_set_text_static(dial_value_label, dial_value_text);
         dial_displayed_value = value;
     }
 
-    int32_t center = lv_obj_get_content_width(dial_face) / 2;
+    int32_t center = dial_pointer_points[0].x;
     int32_t pointer_radius = center * 3 / 4;
-    dial_pointer_points[0] = (lv_point_precise_t){center, center};
-    dial_pointer_points[1] = (lv_point_precise_t){
+    lv_point_precise_t end = {
         center + lv_trigo_sin(angle) * pointer_radius / LV_TRIGO_SIN_MAX,
         center - lv_trigo_sin(angle + 90) * pointer_radius / LV_TRIGO_SIN_MAX,
     };
-    lv_line_set_points(dial_pointer, dial_pointer_points, 2);
+    if (end.x != dial_pointer_points[1].x || end.y != dial_pointer_points[1].y) {
+        invalidate_dial_pointer();
+        dial_pointer_points[1] = end;
+        invalidate_dial_pointer();
+    }
 }
 
 static lv_point_t dial_point_offset(const lv_point_t *point)
@@ -170,13 +191,11 @@ static void dial_event_cb(lv_event_t *event)
     dial_press = DIAL_ROTATING;
 }
 
-static lv_obj_t *create_dial_line(lv_obj_t *parent, lv_point_precise_t points[2],
-                                  lv_color_t color, int32_t width)
+static lv_obj_t *create_dial_line(lv_obj_t *parent, lv_color_t color, int32_t width)
 {
     lv_obj_t *line = lv_line_create(parent);
     lv_obj_set_size(line, LV_PCT(100), LV_PCT(100));
     lv_obj_center(line);
-    lv_line_set_points(line, points, 2);
     lv_obj_set_style_line_color(line, color, LV_PART_MAIN);
     lv_obj_set_style_line_width(line, width, LV_PART_MAIN);
     lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -242,13 +261,16 @@ static void create_dial(lv_obj_t *page)
             center + sin_angle * inner_radius / LV_TRIGO_SIN_MAX,
             center - cos_angle * inner_radius / LV_TRIGO_SIN_MAX,
         };
-        create_dial_line(dial_face, dial_tick_points[i],
-                         major_tick ? lv_color_hex(0xE2E5E9) : lv_color_hex(0x858C96),
-                         major_tick ? 4 : 2);
+        lv_obj_t *tick = create_dial_line(dial_face,
+                                          major_tick ? lv_color_hex(0xE2E5E9) : lv_color_hex(0x858C96),
+                                          major_tick ? 4 : 2);
+        lv_line_set_points(tick, dial_tick_points[i], 2);
     }
 
-    dial_pointer = create_dial_line(dial_face, dial_pointer_points,
-                                    lv_theme_get_color_primary(page), 8);
+    dial_pointer_points[0] = (lv_point_precise_t){center, center};
+    dial_pointer_points[1] = (lv_point_precise_t){center, center - center * 3 / 4};
+    dial_pointer = create_dial_line(dial_face, lv_theme_get_color_primary(page), DIAL_POINTER_WIDTH);
+    lv_line_set_points_mutable(dial_pointer, dial_pointer_points, 2);
 
     lv_obj_t *center_cap = lv_obj_create(dial_face);
     int32_t cap_size = content_size * DIAL_CAP_PERCENT / 100;
@@ -267,15 +289,13 @@ static void create_dial(lv_obj_t *page)
     lv_obj_center(reset_label);
 
     dial_value_label = lv_label_create(page);
-    lv_label_set_text(dial_value_label, "Value: 0");
+    lv_label_set_text_static(dial_value_label, dial_value_text);
     lv_obj_set_style_text_font(dial_value_label, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_align(dial_value_label, LV_ALIGN_TOP_MID, 0, 8);
 
     lv_obj_t *hint = lv_label_create(page);
     lv_label_set_text(hint, "1 turn = 100  |  Hold center to reset");
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
-
-    update_dial_display();
 }
 
 static void update_rocker_display(bool on)
