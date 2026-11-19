@@ -6,3 +6,5 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(ESP32P4_TouchScreen)
+
+include(cmake/ppa_srm_workaround.cmake)
