@@ -14,6 +14,7 @@
 #define DIAL_UNITS_PER_TURN 100
 #define DIAL_CAP_PERCENT 42
 #define DIAL_POINTER_WIDTH 8
+#define NUMERIC_KEYBOARD_DRAG_THRESHOLD 12
 
 typedef enum {
     DIAL_IDLE,
@@ -26,6 +27,9 @@ static const char *TAG = "touch_ui";
 static uint32_t button_press_count;
 static lv_obj_t *numeric_input;
 static lv_obj_t *numeric_keyboard;
+static lv_point_t numeric_keyboard_press_point;
+static lv_point_t numeric_keyboard_start_position;
+static bool numeric_keyboard_dragging;
 static lv_obj_t *dial_face;
 static lv_obj_t *dial_value_label;
 static lv_obj_t *dial_pointer;
@@ -457,6 +461,66 @@ static void numeric_keyboard_event_cb(lv_event_t *event)
     lv_textarea_add_text(numeric_input, key);
 }
 
+static void numeric_keyboard_drag_event_cb(lv_event_t *event)
+{
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST || code == LV_EVENT_INDEV_RESET) {
+        numeric_keyboard_dragging = false;
+        return;
+    }
+
+    lv_indev_t *indev = lv_event_get_indev(event);
+    if (indev == NULL || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) {
+        return;
+    }
+
+    if (code == LV_EVENT_PRESSED) {
+        lv_indev_get_point(indev, &numeric_keyboard_press_point);
+        lv_area_t coords;
+        lv_obj_get_coords(numeric_keyboard, &coords);
+        numeric_keyboard_start_position = (lv_point_t){coords.x1, coords.y1};
+        numeric_keyboard_dragging = false;
+        return;
+    }
+
+    if (code != LV_EVENT_PRESSING) {
+        return;
+    }
+
+    lv_point_t point;
+    lv_indev_get_point(indev, &point);
+    int32_t dx = point.x - numeric_keyboard_press_point.x;
+    int32_t dy = point.y - numeric_keyboard_press_point.y;
+    if (!numeric_keyboard_dragging) {
+        if (dx * dx + dy * dy < NUMERIC_KEYBOARD_DRAG_THRESHOLD * NUMERIC_KEYBOARD_DRAG_THRESHOLD) {
+            return;
+        }
+        numeric_keyboard_dragging = true;
+        lv_buttonmatrix_set_selected_button(numeric_keyboard, LV_BUTTONMATRIX_BUTTON_NONE);
+        lv_obj_set_align(numeric_keyboard, LV_ALIGN_TOP_LEFT);
+    }
+
+    lv_obj_t *parent = lv_obj_get_parent(numeric_keyboard);
+    lv_area_t parent_content;
+    lv_obj_get_content_coords(parent, &parent_content);
+    lv_area_t screen;
+    lv_obj_get_coords(lv_screen_active(), &screen);
+    lv_area_t bounds = {
+        .x1 = LV_MAX(parent_content.x1, screen.x1),
+        .y1 = LV_MAX(parent_content.y1, screen.y1),
+        .x2 = LV_MIN(parent_content.x2, screen.x2),
+        .y2 = LV_MIN(parent_content.y2, screen.y2),
+    };
+
+    int32_t width = lv_obj_get_width(numeric_keyboard);
+    int32_t height = lv_obj_get_height(numeric_keyboard);
+    int32_t max_x = LV_MAX(bounds.x1, bounds.x2 - width + 1);
+    int32_t max_y = LV_MAX(bounds.y1, bounds.y2 - height + 1);
+    int32_t x = LV_CLAMP(bounds.x1, numeric_keyboard_start_position.x + dx, max_x);
+    int32_t y = LV_CLAMP(bounds.y1, numeric_keyboard_start_position.y + dy, max_y);
+    lv_obj_set_pos(numeric_keyboard, x - parent_content.x1, y - parent_content.y1);
+}
+
 static void dismiss_numeric_keyboard_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_CLICKED ||
@@ -553,10 +617,14 @@ static void create_ui(void)
     lv_obj_add_event_cb(numeric_input, numeric_input_event_cb, LV_EVENT_CLICKED, NULL);
 
     numeric_keyboard = lv_keyboard_create(main_page);
+    lv_obj_remove_flag(numeric_keyboard, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_keyboard_set_mode(numeric_keyboard, LV_KEYBOARD_MODE_USER_1);
     lv_keyboard_set_map(numeric_keyboard, LV_KEYBOARD_MODE_USER_1, numeric_key_map, numeric_key_ctrl_map);
+    lv_buttonmatrix_set_button_ctrl_all(numeric_keyboard,
+                                        LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT);
     lv_keyboard_set_textarea(numeric_keyboard, numeric_input);
     lv_obj_remove_event_cb(numeric_keyboard, lv_keyboard_def_event_cb);
+    lv_obj_add_event_cb(numeric_keyboard, numeric_keyboard_drag_event_cb, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(numeric_keyboard, numeric_keyboard_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_set_size(numeric_keyboard, 440, 400);
     lv_obj_align(numeric_keyboard, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
@@ -576,12 +644,7 @@ static void create_ui(void)
     lv_obj_set_style_border_color(numeric_keyboard, lv_color_hex(0xAEB4BD), LV_PART_ITEMS);
     lv_obj_set_style_border_width(numeric_keyboard, 2, LV_PART_ITEMS);
     lv_obj_set_style_radius(numeric_keyboard, 8, LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(numeric_keyboard, lv_color_hex(0x22262C),
-                              LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_grad_color(numeric_keyboard, lv_color_hex(0x101215),
-                                   LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_set_style_border_color(numeric_keyboard, accent, LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_set_style_text_color(numeric_keyboard, accent, LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_remove_style(numeric_keyboard, NULL, LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_add_flag(numeric_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
