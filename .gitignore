@@ -70,6 +70,7 @@ compile_commands.json
 # Local editor and container settings
 .vscode/
 .devcontainer/
+.github/
 
 # Windows specific
 Thumbs.db

@@ -473,6 +473,7 @@ static void dismiss_numeric_keyboard_event_cb(lv_event_t *event)
 static void create_ui(void)
 {
     lv_obj_t *screen = lv_screen_active();
+    lv_color_t accent = lv_theme_get_color_primary(screen);
 
     lv_obj_t *tabview = lv_tabview_create(screen);
     lv_obj_set_size(tabview, LV_PCT(100), LV_PCT(100));
@@ -511,6 +512,17 @@ static void create_ui(void)
     lv_obj_t *button = lv_button_create(main_page);
     lv_obj_set_size(button, 330, 120);
     lv_obj_align(button, LV_ALIGN_CENTER, 0, 50);
+    lv_obj_set_style_radius(button, 14, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(button, lv_color_hex(0x666D77), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(button, lv_color_hex(0x42474F), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(button, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(button, lv_color_hex(0xAEB4BD), LV_PART_MAIN);
+    lv_obj_set_style_border_width(button, 3, LV_PART_MAIN);
+    lv_obj_set_style_border_color(button, accent, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(button, lv_color_hex(0x22262C), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_grad_color(button, lv_color_hex(0x101215), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_transform_width(button, 0, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_transform_height(button, 0, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(button, button_event_cb, LV_EVENT_CLICKED, status_label);
     lv_obj_add_flag(button, LV_OBJ_FLAG_EVENT_BUBBLE);
 
@@ -548,7 +560,28 @@ static void create_ui(void)
     lv_obj_add_event_cb(numeric_keyboard, numeric_keyboard_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_set_size(numeric_keyboard, 440, 400);
     lv_obj_align(numeric_keyboard, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
+    lv_obj_set_style_bg_color(numeric_keyboard, lv_color_hex(0x101215), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(numeric_keyboard, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(numeric_keyboard, lv_color_hex(0xAEB4BD), LV_PART_MAIN);
+    lv_obj_set_style_border_width(numeric_keyboard, 3, LV_PART_MAIN);
+    lv_obj_set_style_radius(numeric_keyboard, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(numeric_keyboard, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(numeric_keyboard, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(numeric_keyboard, 8, LV_PART_MAIN);
     lv_obj_set_style_text_font(numeric_keyboard, &lv_font_montserrat_48, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(numeric_keyboard, lv_color_hex(0xF4F4F4), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(numeric_keyboard, lv_color_hex(0x666D77), LV_PART_ITEMS);
+    lv_obj_set_style_bg_grad_color(numeric_keyboard, lv_color_hex(0x42474F), LV_PART_ITEMS);
+    lv_obj_set_style_bg_grad_dir(numeric_keyboard, LV_GRAD_DIR_VER, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(numeric_keyboard, lv_color_hex(0xAEB4BD), LV_PART_ITEMS);
+    lv_obj_set_style_border_width(numeric_keyboard, 2, LV_PART_ITEMS);
+    lv_obj_set_style_radius(numeric_keyboard, 8, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(numeric_keyboard, lv_color_hex(0x22262C),
+                              LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_grad_color(numeric_keyboard, lv_color_hex(0x101215),
+                                   LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(numeric_keyboard, accent, LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(numeric_keyboard, accent, LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_add_flag(numeric_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
